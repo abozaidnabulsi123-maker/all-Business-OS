@@ -45,3 +45,11 @@ Two projects are visible in the connected account:
 
 ## Next recommended phase
 Complete the security and transaction audit before adding more business modules. Do not apply destructive or permission-changing migrations until the relevant tests and expected role matrix are agreed and verified.
+
+
+## Initial security audit (2026-11-13)
+- Read-only inspection completed for RLS policies, SECURITY DEFINER functions, grants, workflow functions, and triggers.
+- Positive: all 21 public tables have RLS enabled; membership helpers use auth.uid(); key document confirmation/receiving functions enforce roles and perform stock checks.
+- Open decisions: employee posting permissions, deletion of posted ledger rows, membership administration, branch scope, and trigger-only function ACL.
+- No database policies or schema were changed during this audit.
+- Detailed report: `docs/SECURITY_AUDIT_FINDINGS.md`.
