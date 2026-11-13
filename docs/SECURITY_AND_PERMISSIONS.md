@@ -1,78 +1,52 @@
 # AI Business OS — Security and Permissions
 
-## 1. Security goals
-- Prevent users from reading or changing another company's data.
-- Enforce permissions in the database and application service layer.
-- Keep an auditable record of sensitive business actions.
-- Make privileged operations explicit and reviewable.
+## 1. Verified security baseline
+The inspected Supabase project is `abozaidnabulsi123-maker's Project` (`eu-north-1`). RLS is enabled on all 21 public tables.
+
+The separate Supabase project named `ai business os` was empty at inspection time. Confirm the project ID before applying any future migration.
 
 ## 2. Roles
-The roles recorded in the initial company-membership setup are:
+The `company_members.role` constraint permits:
+- `owner`
+- `admin`
+- `manager`
+- `accountant`
+- `employee`
+- `viewer`
 
-| Role | Intended access |
-|---|---|
-| owner | Full company administration and ownership-sensitive actions |
-| admin | Company configuration and broad operational administration |
-| manager | Operational oversight within assigned company/branch scope |
-| accountant | Financial documents, receipts, payments, and accounting reports |
-| employee | Assigned day-to-day operational tasks |
-| viewer | Read-only access to explicitly permitted information |
+## 3. Verified policy model
+Most company-owned tables use `is_company_member(company_id)` for SELECT and `has_company_role(company_id, ...)` for write access.
 
-These are intended permission boundaries. The effective permissions must be implemented and tested in database policies and application services; role names alone do not enforce access.
+Observed patterns:
+- Branches: members can read; owner/admin/manager can insert and update.
+- Companies: members can read; owner/admin can update.
+- Company memberships: SELECT policy for company members; no direct INSERT/UPDATE/DELETE policy was observed.
+- Profiles: users can read their own profile and profiles of users sharing a company; users can update their own profile.
+- Customers, suppliers, products, warehouses, sales/purchase documents, receipts, payments, inventory movements, and journal records: members can read; role-based policies permit writes.
+- Chart of accounts: members can read; owner/admin/manager/accountant can insert and update; owner/admin can delete.
+- Accounting mappings and settings have dedicated company role policies.
+- Accounting account templates have an authenticated SELECT policy with a true condition; this appears to be shared reference data.
 
-## 3. Mandatory authorization checks
-For every company-owned record:
-1. Obtain the user ID from the authenticated session.
-2. Confirm that the user is a member of the record's company.
-3. Confirm the required role or explicit permission.
-4. Enforce branch scope where applicable.
-5. Reject access if any check fails.
+## 4. Important findings requiring review
+These are review items, not confirmed vulnerabilities:
+1. The current policies allow employee-level INSERT and UPDATE on several financial and operational tables, including invoices, purchase bills, payment records, and inventory movements. Confirm whether this matches the intended role matrix.
+2. DELETE policies exist for inventory movements, sales and purchase documents, receipts, supplier payments, and journal records, generally for owner/admin. Posted ledger records should normally be corrected by reversal/return workflows rather than deleted.
+3. `company_members` has only a SELECT policy in the inspected policy list. Membership creation and role changes must be safely handled through trusted functions or a separately secured workflow.
+4. Branch-level scoping is not uniformly visible in every policy expression. Confirm whether company-wide membership is sufficient for each role or whether branch restrictions are required.
+5. RLS being enabled does not prove the policy logic is correct. Cross-tenant and role-based tests are still required.
 
-Never trust a company_id, user_id, role, price, invoice total, or approval flag supplied by an untrusted client without server-side validation.
+## 5. Functions and privileged execution
+Functions observed include `create_company`, `register_company`, `handle_new_user`, `is_company_member`, and `has_company_role`. The membership/role helpers and company registration functions were observed as SECURITY DEFINER. Review each function's search_path, object qualification, auth.uid() checks, EXECUTE grants, and behavior under untrusted input.
 
-## 4. Row Level Security
-- Enable RLS on every tenant-owned table.
-- Use restrictive policies that bind access to authenticated company membership.
-- Separate SELECT, INSERT, UPDATE, and DELETE policies where their rules differ.
-- For INSERT and UPDATE, validate both the existing row and the proposed row scope.
-- Avoid broad policies such as unconditional authenticated-user access.
-- Test cross-company reads and writes explicitly.
+Other workflow functions include invoice confirmation, purchase bill receiving, accounting auto-posting, and payment application. These require transaction and authorization tests.
 
-## 5. Sensitive operations
-The following actions require elevated authorization and audit logging:
-- Creating or disabling users and changing roles.
-- Changing company or branch settings.
-- Posting or reversing invoices and journal entries.
-- Recording or approving payments and receipts.
-- Posting stock adjustments and transfers.
-- Exporting sensitive company data.
-- Deleting or archiving business records.
+## 6. Trigger protections observed
+Triggers currently exist to guard journal entry changes, protect sales invoice and purchase bill headers/items, automatically post confirmed sales and purchase documents, and apply/post sales receipts and supplier payments.
 
-AI assistance must not independently approve payments, post high-impact transactions, delete records, or change access rights. Require a human approval step for configured high-impact actions.
+The presence of a trigger is not a substitute for testing its exact state-transition and authorization behavior.
 
-## 6. Database functions
-Functions using SECURITY DEFINER must:
-- Set a safe, explicit search_path.
-- Fully qualify referenced objects where appropriate.
-- Validate auth.uid() and membership/role inside the function.
-- Grant EXECUTE only to the minimum required roles.
-- Avoid exposing privileged behavior to anon or PUBLIC.
-- Be reviewed whenever their owner or grants change.
-
-## 7. Audit events
-For sensitive operations, record at least:
-- company_id
-- actor_user_id
-- action
-- target_table and target_id
-- timestamp
-- outcome
-- relevant before/after metadata, excluding secrets
-
-Audit records should be protected from ordinary user modification.
-
-## 8. Minimum authorization test matrix
-Test each operation as:
+## 7. Required role test matrix
+Test each relevant operation as:
 - unauthenticated user
 - authenticated non-member
 - viewer
@@ -82,7 +56,16 @@ Test each operation as:
 - admin
 - owner
 
-Also test two separate companies with overlapping roles to prove that membership in one company never grants access to another.
+Also create two test companies and prove that membership in one company never grants access to the other. Test both allowed and denied INSERT, SELECT, UPDATE, and DELETE operations.
 
-## 9. Current-state caution
-The initial setup previously showed RLS enabled on companies, branches, company_members, and profiles, with a limited set of policies. That is not proof that every target table or every role rule is secure. Re-inspect the live Supabase project and test the actual policies before production use.
+## 8. Target policy principles
+- Enforce company membership and role server-side.
+- Enforce branch scope where the business rule requires it.
+- Keep posted stock and financial ledgers immutable to ordinary users.
+- Use reversal, credit note, return, or adjustment workflows for posted records.
+- Restrict role changes and company membership administration to trusted workflows.
+- Log sensitive actions with actor, company, target, timestamp, and outcome.
+- AI may recommend actions but must not approve payments, post high-impact transactions, delete records, or change permissions without explicit human authorization.
+
+## 9. Release gate
+Do not call the security model production-ready until the role matrix, cross-company isolation, privileged functions, destructive operations, and posted-document protections have been tested against the live database.
